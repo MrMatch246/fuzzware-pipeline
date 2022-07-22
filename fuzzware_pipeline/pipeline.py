@@ -39,6 +39,7 @@ from .workers.pool import WorkerPool
 
 logger = logging_handler().get_logger("pipeline")
 
+
 class Pipeline:
     # Base configs
     parent_dir: str
@@ -135,7 +136,7 @@ class Pipeline:
         if self.warnings_file is None:
             self.warnings_file = open(self.warnings_file_path, "w")
 
-        self.warnings_file.write(line+"\n")
+        self.warnings_file.write(line + "\n")
         self.warnings_file.flush()
 
     @staticmethod
@@ -209,10 +210,13 @@ class Pipeline:
         if boot_config:
             boot_required_bbls = boot_config.get(CONFIG_ENTRY_NAME_BOOT_REQUIRED)
             if boot_required_bbls:
-                self.boot_required_bbls = set(map(lambda v: parse_address_value(self.symbols, v)&(~1), boot_required_bbls))
-            boot_avoided_bbls = boot_config.get(CONFIG_ENTRY_NAME_BOOT_AVOID) or boot_config.get(CONFIG_ENTRY_NAME_BOOT_BLACKLISTED)
+                self.boot_required_bbls = set(
+                    map(lambda v: parse_address_value(self.symbols, v) & (~1), boot_required_bbls))
+            boot_avoided_bbls = boot_config.get(CONFIG_ENTRY_NAME_BOOT_AVOID) or boot_config.get(
+                CONFIG_ENTRY_NAME_BOOT_BLACKLISTED)
             if boot_avoided_bbls:
-                self.boot_avoided_bbls = set(map(lambda v: parse_address_value(self.symbols, v)&(~1), boot_avoided_bbls))
+                self.boot_avoided_bbls = set(
+                    map(lambda v: parse_address_value(self.symbols, v) & (~1), boot_avoided_bbls))
 
             if self.booted_bbl == DEFAULT_IDLE_BBL:
                 self.booted_bbl = parse_address_value(self.symbols, boot_config[CONFIG_ENTRY_NAME_BOOT_TARGET]) & (~1)
@@ -229,7 +233,9 @@ class Pipeline:
         if os.path.exists(milestone_bb_list_path):
             self.groundtruth_milestone_basic_blocks = parse_milestone_bb_file(milestone_bb_list_path)
 
-    def __init__(self, parent_dir, name, base_inputs, num_main_fuzzer_procs, disable_modeling=False, write_worker_logs=False, do_full_tracing=False, config_name=SESS_FILENAME_CONFIG, timeout_seconds=0, use_aflpp=False):
+    def __init__(self, parent_dir, name, base_inputs, num_main_fuzzer_procs, disable_modeling=False,
+                 write_worker_logs=False, do_full_tracing=False, config_name=SESS_FILENAME_CONFIG, timeout_seconds=0,
+                 use_aflpp=False, cancel_run_under=None):
         self.booted_bbl = DEFAULT_IDLE_BBL
         self.disable_modeling = disable_modeling
         self.shutdown_requested = False
@@ -239,15 +245,18 @@ class Pipeline:
         self.num_main_fuzzer_procs = num_main_fuzzer_procs
         self.generic_inputs_dir = base_inputs
         self.do_full_tracing = do_full_tracing
-        self.num_required_traces = len(SET_TRACE_FILENAME_PREFIXES) if not do_full_tracing else len(TRACE_FILENAME_PREFIXES) - 1
+        self.num_required_traces = len(SET_TRACE_FILENAME_PREFIXES) if not do_full_tracing else len(
+            TRACE_FILENAME_PREFIXES) - 1
         self.base_config_path = os.path.join(self.parent_dir, config_name)
         self.groundtruth_valid_basic_blocks = None
         self.groundtruth_milestone_basic_blocks = None
         self.stop_time = None
         self.use_aflpp = use_aflpp
+        self.cancel_run_under = cancel_run_under
 
         if not os.path.isfile(self.base_config_path):
-            logger.error(f"Could not find config file: {self.base_config_path}. We are probably not in a target directory. Exiting...")
+            logger.error(
+                f"Could not find config file: {self.base_config_path}. We are probably not in a target directory. Exiting...")
             exit(1)
 
         self.queue_fuzz_inputs = Queue()
@@ -278,7 +287,8 @@ class Pipeline:
         if 'include' in config_map:
             del config_map['include']
 
-        new_config_path = os.path.join(self.base_dir, SESS_DIRNAME_NECESSARY_FILES ,os.path.basename(self.base_config_path))
+        new_config_path = os.path.join(self.base_dir, SESS_DIRNAME_NECESSARY_FILES,
+                                       os.path.basename(self.base_config_path))
         save_config(config_map, new_config_path)
         assert os.path.isfile(new_config_path)
 
@@ -304,6 +314,9 @@ class Pipeline:
     def request_shutdown(self):
         logger.info("Shutdown requested!")
         self.shutdown_requested = True
+
+    def get_pipeline_pid(self):
+        return os.getpid()
 
     def create_dirs(self):
         if os.path.exists(self.base_dir):
@@ -331,9 +344,9 @@ class Pipeline:
         logger.set_output_file(self.base_dir, 'pipeline')
         logger.info(f"logging pipeline output to: {logger.output_file}.log")
 
-    #Makes the directory self contained by copying the necessary files and adjusting the paths inside the provided config_map
+    # Makes the directory self contained by copying the necessary files and adjusting the paths inside the provided config_map
     #
-    #returns adjusted config_map
+    # returns adjusted config_map
     def make_directory_self_contained(self, config_map):
         (files_to_copy, config_map) = self.find_necessary_files(config_map)
         self.copy_necessary_files(files_to_copy)
@@ -353,10 +366,10 @@ class Pipeline:
             with open(runtime_log_path_for_proj(self.base_dir), "a") as f:
                 f.write(f"end_epoch_seconds: {self.stop_time:d}\n")
 
-    #Iterates through config_map searching for files we need to copy.
-    #Adjusts paths inside the config_map.
+    # Iterates through config_map searching for files we need to copy.
+    # Adjusts paths inside the config_map.
     #
-    #returns list of files we need to copy and adjusted config_map
+    # returns list of files we need to copy and adjusted config_map
     def find_necessary_files(self, config_map):
         files_to_copy = []
 
@@ -385,7 +398,7 @@ class Pipeline:
                             files_to_copy.append(associated_elf)
         return (files_to_copy, config_map)
 
-    #Copies the provided files to the "data"-directory inside the project-folder.
+    # Copies the provided files to the "data"-directory inside the project-folder.
     def copy_necessary_files(self, files_to_copy):
         data_dir = necessary_data_dir(self.base_dir)
         for file in files_to_copy:
@@ -427,7 +440,7 @@ class Pipeline:
         # Has booted basic block config and that basic block is hit
         return self.booted_bbl != DEFAULT_IDLE_BBL and (self.booted_bbl in bbl_set) and (
             # And no blacklist addresses found and all whitelist addresses in bbl set
-            (not self.boot_avoided_bbls & bbl_set) and \
+                (not self.boot_avoided_bbls & bbl_set) and \
                 (not self.boot_required_bbls - bbl_set)
         )
 
@@ -451,14 +464,14 @@ class Pipeline:
             # 3. find all input files which include accesses to any newly modeled MMIO accesses
             # 4. find all input files which contain the booted state in their bbls
 
-            prev_session = self.sessions[self.sess_key_for_ind(self.curr_main_sess_index-1)]
+            prev_session = self.sessions[self.sess_key_for_ind(self.curr_main_sess_index - 1)]
             previous_config_map = load_config_deep(prev_session.config_path)
 
             old_contexts = util.config.get_modeled_mmio_contexts(previous_config_map)
             new_contexts = util.config.get_modeled_mmio_contexts(config_map) - old_contexts
 
             input_md5s = set()
-            for fuzzer_no in range(1, self.num_main_fuzzer_procs+1):
+            for fuzzer_no in range(1, self.num_main_fuzzer_procs + 1):
                 for input_path in prev_session.fuzzer_input_paths(fuzzer_no):
                     with open(input_path, "rb") as f:
                         new_hash = hashlib.md5(f.read()).digest()
@@ -470,9 +483,11 @@ class Pipeline:
                     _, _, _, bbl_set_path, mmio_set_path, _ = trace_paths_for_input(input_path)
                     if not os.path.isfile(bbl_set_path):
                         if self.num_main_fuzzer_procs == 1:
-                            self.add_warning_line("[add_main_session] Could not find trace files for input path '{}'".format(input_path))
+                            self.add_warning_line(
+                                "[add_main_session] Could not find trace files for input path '{}'".format(input_path))
                         continue
-                    triggers_boot = self.booted_bbl == DEFAULT_IDLE_BBL or bbl_set_contains(bbl_set_path, self.booted_bbl)
+                    triggers_boot = self.booted_bbl == DEFAULT_IDLE_BBL or bbl_set_contains(bbl_set_path,
+                                                                                            self.booted_bbl)
                     discovers_new_mmio = mmio_set_contains_one_context(mmio_set_path, new_contexts)
                     if discovers_new_mmio:
                         new_mmio_or_boot.append(input_path)
@@ -483,12 +498,12 @@ class Pipeline:
                         new_mmio_or_boot.append(input_path)
                     unique.append(input_path)
 
-        generic = list(glob.glob(self.generic_inputs_dir+"/*"))
+        generic = list(glob.glob(self.generic_inputs_dir + "/*"))
         input_candidate_lists = [new_mmio_and_boot, new_mmio_or_boot, unique, generic]
 
         # Also add default inputs as last entry in case it is not already part of the list
         if os.path.abspath(self.generic_inputs_dir) != default_base_input_dir():
-            input_candidate_lists.append(list(glob.glob(default_base_input_dir()+"/*")))
+            input_candidate_lists.append(list(glob.glob(default_base_input_dir() + "/*")))
 
         return [l for l in input_candidate_lists if l]
 
@@ -524,7 +539,8 @@ class Pipeline:
             prefix_input_candidate = self.curr_main_session.prefix_input_path
 
         self.curr_main_sess_index += 1
-        self.sessions[self.curr_main_sess_key] = Session(self, self.curr_main_sess_key, self.num_main_fuzzer_procs, config_map)
+        self.sessions[self.curr_main_sess_key] = Session(self, self.curr_main_sess_key, self.num_main_fuzzer_procs,
+                                                         config_map)
         self.known_input_hashes[self.curr_main_sess_key] = set()
 
         # Try different sets of inputs in order of quality
@@ -538,7 +554,8 @@ class Pipeline:
             for path in input_path_list:
                 shutil.copy2(path, new_sess_inputs_dir)
 
-            self.curr_main_session.minimize_inputs(prefix_candidate_path=prefix_input_candidate, is_previously_used_prefix=is_previously_used_prefix)
+            self.curr_main_session.minimize_inputs(prefix_candidate_path=prefix_input_candidate,
+                                                   is_previously_used_prefix=is_previously_used_prefix)
             # Try the inputs
             if self.curr_main_session.start_fuzzers():
                 start_success = True
@@ -551,7 +568,7 @@ class Pipeline:
     def handle_queue_forever(self):
         idle_count, loop_count = 0, 0
         num_dead_fuzzer_restarts = 0
-        num_config_updates = 0 # Types of config updates, new/modified: 1. MMIO models, 2. exit-at, 3. state, 4. systick enabled
+        num_config_updates = 0  # Types of config updates, new/modified: 1. MMIO models, 2. exit-at, 3. state, 4. systick enabled
         restart_pending = False
         pending_prefix_candidate = None
         time_latest_new_basic_block = None
@@ -559,7 +576,27 @@ class Pipeline:
         # {input_path: {PREFIX_NAME: trace_path}}
         available_trace_paths_for_input = {}
         current_time = time.time()
+
+        #########CALC#############
+
+        found_bb = 0
+        found_mmio = 0
+        start_time = time.time()
+        round_time = time.time()
+        killed = False
+        ratio_bb = 0
+        ratio_mmio = 0
+        bb_last_round = 0
+        mmio_last_round = 0
+        last_round_minute = 0
+        shutdown_requested = False
+        upper_threshold = 1500  # TODO Add a way to calibrate this
+        lower_threshold = 100
+
+        #########################
+
         while True:
+
             if self.shutdown_requested and not restart_pending:
                 num_config_updates += 1
                 self.curr_main_session.kill_fuzzers()
@@ -571,6 +608,33 @@ class Pipeline:
             if now - self.start_time > FIRST_STAT_PRINT_DELAY and now - current_time > STAT_PRINT_INTERVAL:
                 current_time = now
                 self.log_stats()
+
+            # CALCULATE STATISTICS
+            if self.cancel_run_under is not None and not shutdown_requested:
+                # logger.info("BLUEPATTERN : YESSSS")
+
+                minutes_since_start = round((now - start_time) / 60)
+
+                ratio_bb = found_bb / (now - start_time)
+                ratio_mmio = found_mmio / (now - start_time)
+
+                if minutes_since_start % 2 == 0 and minutes_since_start != 0 and last_round_minute != minutes_since_start:
+                    bb_this_round = found_bb - bb_last_round
+                    mmio_this_round = found_mmio - mmio_last_round
+                    last_round_minute = minutes_since_start
+                    bb_last_round = found_bb
+                    mmio_last_round = found_mmio
+                    round_ratio_bb = bb_this_round / (now - round_time)
+                    round_ratio_mmio = mmio_this_round / (now - round_time)
+                    round_time = now
+
+                if (self.cancel_run_under != 0 and 0 < ratio_bb < float(self.cancel_run_under)) \
+                        and lower_threshold < found_bb < upper_threshold:
+                    logger.info(
+                        "BLUEPATTERN [*] Terminating Fuzzware after {0} minutes===========================".format(
+                            minutes_since_start))
+                    self.request_shutdown()
+                    shutdown_requested = True
 
             # Make sure trace jobs are created as soon as possible
             for _ in range(50):
@@ -615,6 +679,9 @@ class Pipeline:
                 config_snippet_filename = os.path.basename(config_path)
                 logger.info(f"New MMIO model: {config_snippet_filename}")
 
+                # CALC
+                found_mmio += 1
+
                 merge_config_file_into(self.mmio_model_config_path, config_path)
             except queue.Empty:
                 pass
@@ -649,12 +716,18 @@ class Pipeline:
                         logger.debug("Looking at new translation block set")
                         new_bbs = bbl_set - self.visited_translation_blocks
                         if new_bbs:
-                            logger.info(f"Found {len(new_bbs)} new translation / basic block{'s' if len(new_bbs) > 1 else ''}!")
+                            logger.info(
+                                f"Found {len(new_bbs)} new translation / basic block{'s' if len(new_bbs) > 1 else ''}!")
                             time_latest_new_basic_block = time.time()
+
+                            # CALC
+                            found_bb += len(new_bbs)
+
                             for pc in new_bbs:
                                 if self.groundtruth_valid_basic_blocks and pc in self.groundtruth_valid_basic_blocks:
                                     self.visited_valid_basic_blocks.add(pc)
                                     logger.info(f"New basic block: 0x{pc:08x}")
+
                                 else:
                                     logger.info(f"New translation block: 0x{pc:08x}")
                                 if self.groundtruth_milestone_basic_blocks and pc in self.groundtruth_milestone_basic_blocks:
@@ -662,7 +735,9 @@ class Pipeline:
                                     self.visited_milestone_basic_blocks.add(pc)
                             self.visited_translation_blocks |= new_bbs
 
-                        if (not (self.curr_main_session.prefix_input_path or pending_prefix_candidate)) and self.is_successfully_booted(bbl_set):
+                        if (not (
+                                self.curr_main_session.prefix_input_path or pending_prefix_candidate)) and self.is_successfully_booted(
+                                bbl_set):
                             logger.info("FOUND MAIN ADDRESS for trace file: '{}'".format(trace_filename))
                             pending_prefix_candidate = input_for_trace_path(trace_file_path)
                             restart_pending = True
@@ -673,7 +748,7 @@ class Pipeline:
                         new_pairs = []
                         for pc, address, access_mode in mmio_set_entries:
                             if (pc, address) not in self.mmio_access_contexts and \
-                                (MMIO_HOOK_PC_ALL_ACCESS_SITES, address) not in self.mmio_access_contexts and \
+                                    (MMIO_HOOK_PC_ALL_ACCESS_SITES, address) not in self.mmio_access_contexts and \
                                     (pc, MMIO_HOOK_MMIO_ALL_ADDRS) not in self.mmio_access_contexts:
                                 self.mmio_access_contexts.add((pc, address))
                                 self.num_models_per_pc[pc] = self.num_models_per_pc.get(pc, 0) + 1
@@ -690,7 +765,8 @@ class Pipeline:
                 time.sleep(IDLE_BUSYLOOP_SLEEP)
 
                 if idle_count > IDLE_COUNT_HOUSEKEEPING or (loop_count % LOOP_COUNT_HOUSEKEEPING == 0):
-                    self.worker_pool.collect_job_timings(LOOP_COUNT_HOUSEKEEPING // 2 if idle_count < IDLE_COUNT_HOUSEKEEPING else -1)
+                    self.worker_pool.collect_job_timings(
+                        LOOP_COUNT_HOUSEKEEPING // 2 if idle_count < IDLE_COUNT_HOUSEKEEPING else -1)
                     self.worker_pool.check_running_procs()
 
                     # if a restart is pending and nothing has happened for a small amount of time, check jobs
@@ -706,13 +782,15 @@ class Pipeline:
                             time_latest_new_basic_block = None
                         else:
                             if idle_count % 10 == 0:
-                                logger.info("Waiting for leftover jobs ({}) to finish...".format(len(self.worker_pool.jobs)))
+                                logger.info(
+                                    "Waiting for leftover jobs ({}) to finish...".format(len(self.worker_pool.jobs)))
                                 self.worker_pool.check_lost_jobs()
                     else:
                         # Check fuzzer process liveness
                         if not self.curr_main_session.is_alive():
                             dead_instance_ids = [i + 1 for i in self.curr_main_session.dead_fuzzer_instance_indices()]
-                            self.add_warning_line(f"[WARNING] Fuzzer instances {dead_instance_ids} in session {self.curr_main_sess_index} died, starting new main session, now at restart {num_dead_fuzzer_restarts+1} of {MAX_NUM_DEAD_FUZZER_RESTARTS}")
+                            self.add_warning_line(
+                                f"[WARNING] Fuzzer instances {dead_instance_ids} in session {self.curr_main_sess_index} died, starting new main session, now at restart {num_dead_fuzzer_restarts + 1} of {MAX_NUM_DEAD_FUZZER_RESTARTS}")
 
                             # Fuzzer instance was killed or died
                             if num_dead_fuzzer_restarts < MAX_NUM_DEAD_FUZZER_RESTARTS:
@@ -721,18 +799,19 @@ class Pipeline:
                                 self.curr_main_session.kill_fuzzers()
                                 restart_pending = True
                             else:
-                                logger.error("Too many fuzzer sessions died, exiting. Check for bogus MMIO accesses created from fuzzer-controlled firmware execution.")
+                                logger.error(
+                                    "Too many fuzzer sessions died, exiting. Check for bogus MMIO accesses created from fuzzer-controlled firmware execution.")
                                 self.add_warning_line("[ERROR] Too many fuzzer sessions died, exiting")
                                 self.request_shutdown()
 
             # Do we have config updates?
             if (not restart_pending) and num_config_updates != 0 and (
-                # We have a huge number of config updates
-                num_config_updates >= CONFIG_UPDATE_FORCE_FUZZER_RESTART_LIMIT or (
-                # Or we have a smaller number of updates, but waited for new things to happen long enough
-                time_latest_new_basic_block is None or
+                    # We have a huge number of config updates
+                    num_config_updates >= CONFIG_UPDATE_FORCE_FUZZER_RESTART_LIMIT or (
+                    # Or we have a smaller number of updates, but waited for new things to happen long enough
+                    time_latest_new_basic_block is None or
                     (time.time() - time_latest_new_basic_block > CONFIG_UPDATE_MIN_TIME_SINCE_NEW_BB_DISCOVERY)
-                )):
+            )):
                 self.curr_main_session.kill_fuzzers()
                 restart_pending = True
                 # After killing the fuzzers, add a temporary modeling worker to go through any leftover modeling jobs
@@ -756,14 +835,16 @@ class Pipeline:
         state_gen_job_count = len(self.worker_pool.job_queue_state_gen)
         log_string = "Current Pipeline Status\n"
         if self.groundtruth_valid_basic_blocks:
-            num_covered_bbs, num_valid_bbs = len(self.visited_valid_basic_blocks), len(self.groundtruth_valid_basic_blocks)
-            log_string += f"Basic block coverage: {num_covered_bbs} / {num_valid_bbs} ({round(num_covered_bbs/num_valid_bbs * 100, 2) }%)."
+            num_covered_bbs, num_valid_bbs = len(self.visited_valid_basic_blocks), len(
+                self.groundtruth_valid_basic_blocks)
+            log_string += f"Basic block coverage: {num_covered_bbs} / {num_valid_bbs} ({round(num_covered_bbs / num_valid_bbs * 100, 2)}%)."
         else:
             log_string += f"Translation blocks covered (missing BB ground truth!): {len(self.visited_translation_blocks)}."
 
         if self.groundtruth_milestone_basic_blocks:
-            num_covered_milestone_bbs, num_milestone_bbs = len(self.visited_milestone_basic_blocks), len(self.groundtruth_milestone_basic_blocks)
-            log_string += f" Milestones covered: {num_covered_milestone_bbs} / {num_milestone_bbs} ({round(num_covered_milestone_bbs / num_milestone_bbs * 100, 2) }%)"
+            num_covered_milestone_bbs, num_milestone_bbs = len(self.visited_milestone_basic_blocks), len(
+                self.groundtruth_milestone_basic_blocks)
+            log_string += f" Milestones covered: {num_covered_milestone_bbs} / {num_milestone_bbs} ({round(num_covered_milestone_bbs / num_milestone_bbs * 100, 2)}%)"
 
         log_string += f"\nCurrent jobs in Queue (trace gen/state gen/model gen): {trace_gen_job_count}/{state_gen_job_count}/{model_gen_job_count}\n"
 
@@ -773,7 +854,8 @@ class Pipeline:
         else:
             log_string += "Current executions per second:\n"
             for fuzzer in self.curr_main_session.fuzzers:
-                curr_execs_per_second, overall_execs_per_second = self.curr_main_session.get_execs_per_sec(fuzzer.inst_num)
+                curr_execs_per_second, overall_execs_per_second = self.curr_main_session.get_execs_per_sec(
+                    fuzzer.inst_num)
                 log_string += f"fuzzer{fuzzer.inst_num}: {curr_execs_per_second:.2f} (overall: {overall_execs_per_second:.2f})\n"
 
         logger.info(log_string)

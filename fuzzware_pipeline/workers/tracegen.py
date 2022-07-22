@@ -6,7 +6,7 @@ import subprocess
 import time
 import uuid
 from pathlib import Path
-
+import multiprocessing as mp
 import rq
 from fuzzware_pipeline.logging_handler import logging_handler
 from rq.worker import WorkerStatus
@@ -16,14 +16,14 @@ from ..run_target import gen_run_arglist, run_target
 from ..util.config import load_extra_args, parse_extra_args
 
 logger = logging_handler().get_logger("tracegen")
-
+MULTI = True
 FORKSRV_FD = 198
 
 # Make sure these names are synchronized with the argument names below
 ARGNAME_BBL_SET_PATH, ARGNAME_MMIO_SET_PATH = "bbl_set_path", "mmio_set_path"
 ARGNAME_EXTRA_ARGS = "extra_args"
 FORKSERVER_UNSUPPORTED_TRACE_ARGS = ("mmio_trace_path", "bbl_trace_path", "ram_trace_path")
-def gen_traces(config_path, input_path, bbl_trace_path=None, ram_trace_path=None, mmio_trace_path=None, bbl_set_path=None, mmio_set_path=None, extra_args=None, silent=False, bbl_hash_path=None):
+def gen_traces(config_path, input_path, bbl_trace_path=None, ram_trace_path=None, mmio_trace_path=None, bbl_set_path=None, mmio_set_path=None, extra_args=None, silent=False, bbl_hash_path=None,queue=None):
     extra_args = list(extra_args) if extra_args else []
 
     if bbl_trace_path is not None:
@@ -40,7 +40,29 @@ def gen_traces(config_path, input_path, bbl_trace_path=None, ram_trace_path=None
         extra_args += ["--bb-hash-out", bbl_hash_path]
 
     run_target(config_path, input_path, extra_args, silent=silent, stdout=subprocess.DEVNULL if silent else None, stderr=subprocess.DEVNULL if silent else None)
+    queue.put(1)
+    #if MULTI:
+    #    logger.info(f"Processed gen_trace Job {number}")
     return True
+
+
+
+def multi_gen_native_traces(config_path, extra_args, silent,input_path, bbl_set_path, mmio_set_path, bbl_hash_path,queue, bbl_set_paths, mmio_set_paths, bbl_hash_paths):
+    gentrace_proc = TraceGenProc(config_path, extra_args, silent=silent,
+                                 gen_bb_set=(not bbl_set_paths) is False and not all(p is None for p in bbl_set_paths),
+                                 gen_mmio_set=(not mmio_set_paths) is False and not all(
+                                     p is None for p in mmio_set_paths),
+                                 gen_bb_hash=(not bbl_hash_paths) is False and not all(
+                                     p is None for p in bbl_hash_paths)
+                                 )
+
+    queue.put((input_path,gentrace_proc.gen_traces(input_path, bbl_set_path, mmio_set_path, bbl_hash_path)))
+    gentrace_proc.destroy()
+    return True
+
+def multi_gen_native_traces_manager(args_list):
+    with mp.Pool() as p:
+        p.starmap(multi_gen_native_traces, args_list)
 
 def batch_gen_native_traces(config_path, input_paths, extra_args=None, bbl_set_paths=None, mmio_set_paths=None, bbl_hash_paths=None, silent=False):
     """
@@ -59,13 +81,41 @@ def batch_gen_native_traces(config_path, input_paths, extra_args=None, bbl_set_p
     bbl_set_paths = bbl_set_paths or common_length * [None]
     mmio_set_paths = mmio_set_paths or common_length * [None]
     bbl_hash_paths = bbl_hash_paths or common_length * [None]
+    if False:
+        m = mp.Manager()
+        queue = m.Queue()
+        args_list = []
+        results = {}
+        for input_path, bbl_set_path, mmio_set_path, bbl_hash_path in zip(input_paths, bbl_set_paths, mmio_set_paths,
+                                                                          bbl_hash_paths):
+            args_list.append((config_path, extra_args, silent, input_path, bbl_set_path, mmio_set_path, bbl_hash_path,
+                              queue, bbl_set_paths, mmio_set_paths, bbl_hash_paths))
+        p = mp.Process(target=multi_gen_native_traces_manager, args=(args_list,))
+        p.start()
+        caught = 0
+        while caught < common_length:
+            res = queue.get()
+            results[res[0]] = res[1]
+            caught += 1
+        p.join()
 
-    for input_path, bbl_set_path, mmio_set_path, bbl_hash_path in zip(input_paths, bbl_set_paths, mmio_set_paths, bbl_hash_paths):
-        if not gentrace_proc.gen_trace(input_path, bbl_set_path, mmio_set_path, bbl_hash_path):
-            logger.error(f"Hit abrupt end while trying to execute input {input_path}")
-            assert(False)
+        for input_path, bbl_set_path, mmio_set_path, bbl_hash_path in zip(input_paths, bbl_set_paths, mmio_set_paths,
+                                                                          bbl_hash_paths):
+            if not results[input_path]:
+                logger.error(f"Hit abrupt end while trying to execute input {input_path}")
+                assert (False)
+    else:
+        for input_path, bbl_set_path, mmio_set_path, bbl_hash_path in zip(input_paths, bbl_set_paths, mmio_set_paths, bbl_hash_paths):
+            if not gentrace_proc.gen_trace(input_path, bbl_set_path, mmio_set_path, bbl_hash_path):
+                logger.error(f"Hit abrupt end while trying to execute input {input_path}")
+                assert(False)
 
     gentrace_proc.destroy()
+
+def multi_proc_manager(function=None,arg_tuple_list=[]):
+    with mp.Pool() as p:
+        p.starmap(function, arg_tuple_list)
+
 
 def gen_missing_maindir_traces(maindir, required_trace_prefixes, fuzzer_nums=None, tracedir_postfix="", log_progress=False, verbose=False, crashing_inputs=False):
     projdir = nc.project_base(maindir)
@@ -143,21 +193,27 @@ def gen_missing_maindir_traces(maindir, required_trace_prefixes, fuzzer_nums=Non
         if log_progress:
             logger.info(f"Generating traces took {time.time() - start_time:.02f} seconds for {len(input_paths)} input(s)")
     else:
+        m = mp.Manager()
+        processed_queue=m.Queue()
         num_processed = 0
+        job_args_multi = []
+        iteration = 0
         for input_path, bbl_trace_path, ram_trace_path, mmio_trace_path, bbl_set_path, mmio_set_path, bbl_hash_path in jobs_for_config:
-            gen_traces(str(config_path), str(input_path),
-                bbl_trace_path=bbl_trace_path, ram_trace_path=ram_trace_path, mmio_trace_path=mmio_trace_path,
-                bbl_set_path=bbl_set_path, mmio_set_path=mmio_set_path, bbl_hash_path=bbl_hash_path,
-                extra_args=extra_args, silent=not verbose
-            )
-            num_processed += 1
-
+            job_args_multi.append((str(config_path), str(input_path), bbl_trace_path, ram_trace_path, mmio_trace_path,
+                                   bbl_set_path, mmio_set_path, extra_args, not verbose, bbl_hash_path, processed_queue))
+            iteration += 1
+        p = mp.Process(target=multi_proc_manager, args=(gen_traces,job_args_multi))
+        p.start()
+        while num_processed < iteration:
+            num_processed+=processed_queue.get(block=True,timeout=100)
             if log_progress:
                 if num_processed > 0 and num_processed % 50 == 0:
                     time_passed = round(time.time() - start_time)
-                    relative_done = (num_processed+1) / num_gentrace_jobs
+                    relative_done = (num_processed + 1) / num_gentrace_jobs
                     time_estimated = round((relative_done ** (-1)) * time_passed)
-                    logger.info(f"[*] Processed {num_processed}/{num_gentrace_jobs} in {time_passed} seconds. Estimated seconds remaining: {time_estimated-time_passed}")
+                    logger.info(
+                        f"[*] Processed {num_processed}/{num_gentrace_jobs} in {time_passed} seconds. Estimated seconds remaining: {time_estimated - time_passed}")
+        p.join()
 
 def gen_all_missing_traces(projdir, trace_name_prefixes=None, log_progress=False, verbose=False, crashing_inputs=False):
     if trace_name_prefixes is None:

@@ -6,8 +6,8 @@ import re
 import subprocess
 import sys
 import time
+import multiprocessing as mp
 from datetime import datetime
-
 from . import naming_conventions as nc
 from .logging_handler import logging_handler
 from .naming_conventions import (PIPELINE_DIRNAME_STATS, VENV_NAME_MODELING,
@@ -267,16 +267,27 @@ def do_pipeline(args, leftover_args):
     timeout_seconds = sum(x * int(t) for x, t in zip([1, 60, 3600, 24*3600], reversed(args.run_for.split(":"))))
 
     status = 0
-    pipeline = Pipeline(args.target_dir, args.project_name, args.base_inputs, args.num_local_fuzzer_instances, args.disable_modeling, write_worker_logs=not args.silent_workers, do_full_tracing=args.full_traces, config_name=args.runtime_config_name, timeout_seconds=timeout_seconds, use_aflpp=args.aflpp)
-
+    pipeline = Pipeline(args.target_dir, args.project_name, args.base_inputs, args.num_local_fuzzer_instances, args.disable_modeling, write_worker_logs=not args.silent_workers, do_full_tracing=args.full_traces, config_name=args.runtime_config_name, timeout_seconds=timeout_seconds, use_aflpp=args.aflpp,cancel_run_under=args.cancel_run_under)
+    #print(f"BLUEPATTERN: Pipeline {pipeline.get_pipeline_pid()}")
     try:
         if timeout_seconds != 0:
             def handler(signal_no, stack_frame):
+
                 pipeline.request_shutdown()
 
             # spin up an alarm for the time
             signal.signal(signal.SIGALRM, handler)
             signal.alarm(timeout_seconds)
+
+        if True:
+            def handler_2(signal_no, stack_frame):
+                logger.info("BLUEPATTERN PIPELINE TERMINATING")
+                pipeline.request_shutdown()
+
+            # spin up an alarm for the time
+            signal.signal(signal.SIGUSR1, handler_2)
+
+
 
         pipeline.start()
     except Exception as e:
@@ -296,6 +307,8 @@ def do_pipeline(args, leftover_args):
                 break
             except KeyboardInterrupt:
                 pass
+    #print("BLUEPATTERN: PIPELINE_EXIT")
+
     exit(status)
 
 MODE_EMU = 'emu'
@@ -733,6 +746,16 @@ STATNAME_CRASH_CONTEXTS = 'crashcontexts'
 KNOWN_STATNAMES = [
     STATNAME_COV, STATNAME_MMIO_COSTS, STATNAME_MMIO_OVERHEAD_ELIM, STATNAME_CRASH_CONTEXTS
 ]
+def multi_run_target_manager(args_list:list):
+    with mp.Pool() as pool:
+        pool.starmap(run_target_wrapper, args_list)
+
+def run_target_wrapper(config_path, input_path, extra_args, get_output=False, silent=False, result_queue=None):
+    from .run_target import run_target
+    # emu_output = str(run_target(config_path, crashing_input, extra_args, get_output=True, silent=True))
+    result_queue.put((input_path,str(run_target(config_path, input_path, extra_args, get_output=get_output, silent=silent))))
+
+
 def do_genstats(args, leftover_args):
     from .util.config import load_config_deep
     from .workers.tracegen import gen_all_missing_traces
@@ -876,8 +899,52 @@ def do_genstats(args, leftover_args):
         for main_dir in main_dirs_for_proj(projdir):
             logger.info(f"Crash contexts from main dir: {main_dir}")
             config_path = None
+            results_dict={}
+            args_tuple_list=[]
+            m=mp.Manager()
+            results_queue= m.Queue()
+            iterator=0
+            num_processed=0
+            for crashing_input in nc.crash_paths_for_main_dir(main_dir):
+                #continue
+                if config_path is None:
+                    config_path = config_for_input_path(crashing_input)
+                    extra_args_file = extra_args_for_config_path(config_path)
+                    extra_args = parse_extra_args(load_extra_args(extra_args_file), projdir)
+                    if "-v" not in extra_args:
+                        extra_args += ["-v"]
+                #emu_output = str(run_target(config_path, crashing_input, extra_args, get_output=True, silent=True))
+                args_tuple_list.append([config_path, crashing_input, extra_args, True,True,results_queue])
+                iterator+=1
+
+            p = mp.Process(target=multi_run_target_manager, args=(args_tuple_list,))
+            p.start()
+            while num_processed < iterator:
+                result=results_queue.get(block=True)
+                results_dict[result[0]]=result[1]
+                num_processed+=1
+            p.join()
+            #print(results_dict)
+            #exit()
+
+
+
 
             for crashing_input in nc.crash_paths_for_main_dir(main_dir):
+
+                emu_output=results_dict[crashing_input]
+                pc, lr = pc_lr_from_emu_output(emu_output)
+                crashing_input = str(Path(crashing_input).relative_to(projdir))
+
+                if pc is None:
+                    logger.warning(f"An input does not reproduce a crash: {crashing_input}")
+                    continue
+
+                crash_contexts.setdefault((pc, lr), []).append(crashing_input)
+                logger.info(f"Got (pc, lr) = ({pc:#010x}, {lr:#010x}) for the following input path: {crashing_input}")
+
+            for crashing_input in nc.crash_paths_for_main_dir(main_dir):
+                continue
                 if config_path is None:
                     config_path = config_for_input_path(crashing_input)
                     extra_args_file = extra_args_for_config_path(config_path)
@@ -885,6 +952,7 @@ def do_genstats(args, leftover_args):
                     if "-v" not in extra_args:
                         extra_args += ["-v"]
                 emu_output = str(run_target(config_path, crashing_input, extra_args, get_output=True, silent=True))
+                print(emu_output)
                 pc, lr = pc_lr_from_emu_output(emu_output)
                 crashing_input = str(Path(crashing_input).relative_to(projdir))
 
@@ -962,6 +1030,7 @@ def main():
     parser_pipeline.add_argument('--full-traces', default=False, action='store_true', help="Enable generating full traces instead of only generating the (much smaller) set-based traces.")
     parser_pipeline.add_argument('--skip-afl-cpufreq', default=False, action='store_true', help="Skip AFL's performance governor check by setting AFL_SKIP_CPUFREQ=1.")
     parser_pipeline.add_argument('--aflpp', default=False, action="store_true", help="Use AFLplusplus (instead of afl).")
+    parser_pipeline.add_argument('--cancel_run_under', default=None, help="Cancel Run under x bbs per second")
 
     # Bare-bone Fuzzer command-line arguments
     parser_fuzz.add_argument('out_subdir', help="The output subdirectory name to use.")
