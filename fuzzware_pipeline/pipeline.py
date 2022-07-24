@@ -630,9 +630,9 @@ class Pipeline:
 
                 if (self.cancel_run_under != 0 and 0 < ratio_bb < float(self.cancel_run_under)) \
                         and lower_threshold < found_bb < upper_threshold:
-                    logger.info(
-                        "BLUEPATTERN [*] Terminating Fuzzware after {0} minutes===========================".format(
-                            minutes_since_start))
+
+                    if not found_bb > 2000:
+                        logger.info("BLUEPATTERN [*] Terminating Fuzzware after {0} minutes===========================".format(minutes_since_start))
                     self.request_shutdown()
                     shutdown_requested = True
 
