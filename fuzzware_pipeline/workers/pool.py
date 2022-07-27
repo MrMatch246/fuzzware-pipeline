@@ -111,7 +111,7 @@ class WorkerPool:
         else:
             stdout_path = subprocess.DEVNULL
 
-        self.worker_procs[REDIS_QUEUE_NAME_TRACE_GEN_JOBS].append(subprocess.Popen(["pypy3", "-m", "rq.cli", "worker", "--url", f"redis://localhost:{self.redis_port}", "-q", "-w",  class_path(tracegen.TraceGenWorker), REDIS_QUEUE_NAME_STATE_GEN_JOBS, REDIS_QUEUE_NAME_TRACE_GEN_JOBS], stdout=stdout_path, stdin=subprocess.DEVNULL, stderr=subprocess.STDOUT)) #pylint: disable=consider-using-with
+        self.worker_procs[REDIS_QUEUE_NAME_TRACE_GEN_JOBS].append(subprocess.Popen(["python3", "-m", "rq.cli", "worker", "--url", f"redis://localhost:{self.redis_port}", "-q", "-w",  class_path(tracegen.TraceGenWorker), REDIS_QUEUE_NAME_STATE_GEN_JOBS, REDIS_QUEUE_NAME_TRACE_GEN_JOBS], stdout=stdout_path, stdin=subprocess.DEVNULL, stderr=subprocess.STDOUT)) #pylint: disable=consider-using-with
 
     def spawn_modeling_worker(self, burst=False):
         modeling_venv_path = find_modeling_venv()

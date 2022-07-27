@@ -65,7 +65,7 @@ def duplicate_test_file(test_file):
         shutil.copy(test_file, test_file+f"_{i}")
 
 def run_corpus_minimizer_for_fuzzer(fuzzer_test_output_path, config_file, verbose):
-    target_args = ['pypy3', '-m', 'fuzzware_harness.harness', '-m', '-c', str(config_file)]
+    target_args = ['python3', '-m', 'fuzzware_harness.harness', '-m', '-c', str(config_file)]
     minimizer_args = [AFL_CMIN, '-m', 'none', '-U', '-t', '1000', '-K', '-i']
     minimizer_args.append(str(fuzzer_test_output_path))
     minimizer_args.append('-o')

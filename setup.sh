@@ -4,7 +4,7 @@
 
 # 1. install fuzzware (excluding angr)
 echo "[*] Installing pipeline..."
-pypy3 -m pip install -U -r requirements.txt || exit 1
-pypy3 -m pip install -e . || exit 1
+pip3 install -U -r requirements.txt || exit 1
+pip3 install -e . || exit 1
 
 exit 0
