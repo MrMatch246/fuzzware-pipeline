@@ -22,8 +22,9 @@ from .naming_conventions import (PIPELINE_DIRNAME_STATS, VENV_NAME_MODELING,
 from .util.config import load_extra_args, parse_extra_args
 from .util.eval_utils import (collect_covered_basic_blocks, valid_bbs_for_proj,
                                 find_traces_covering_all)
+from fuzzware_harness.tracing.serialization import parse_bbl_set
 
-
+NUM_INSTANCES = mp.cpu_count() if os.cpu_count()<=24 else 10
 
 logger = logging_handler().get_logger("pipeline")
 
@@ -514,7 +515,7 @@ def do_replaytest(args, leftover_args):
         exit(1)
 
     dst_path = os.path.join(args.project_dir, nc.REPLAY_TEST_DIRECTORY)
-    if os.path.isdir(dst_path):
+    if os.path.isdir(dst_path) and (len(os.listdir(dst_path)) > 0):
         backup_replaytest_directory(dst_path)
 
     os.mkdir(dst_path)
@@ -742,7 +743,8 @@ def do_gentraces(args, leftover_args):
         main_dir = project_main_dirs[main_dir_num-1]
 
         print(f"Generating traces for main directory {main_dir}")
-        gen_missing_maindir_traces(main_dir, required_trace_prefixes, tracedir_postfix=args.tracedir_postfix, log_progress=True, verbose=args.verbose, crashing_inputs=args.crashes,num_threads=args.num_threads)
+        gen_missing_maindir_traces(main_dir, required_trace_prefixes, tracedir_postfix=args.tracedir_postfix, log_progress=True, verbose=args.verbose, crashing_inputs=args.crashes,
+                                   num_instances=args.num_instances)
 
 MODE_GENSTATS = 'genstats'
 STATNAME_COV, STATNAME_MMIO_COSTS, STATNAME_MMIO_OVERHEAD_ELIM = 'coverage', 'modeling-costs', 'mmio-overhead-elim'
@@ -750,15 +752,31 @@ STATNAME_CRASH_CONTEXTS = 'crashcontexts'
 KNOWN_STATNAMES = [
     STATNAME_COV, STATNAME_MMIO_COSTS, STATNAME_MMIO_OVERHEAD_ELIM, STATNAME_CRASH_CONTEXTS
 ]
-def multi_run_target_manager(args_list:list):
-    with mp.Pool() as pool:
-        pool.starmap(run_target_wrapper, args_list)
+#def multi_run_target_manager(args_list:list):
+#    with mp.Pool() as pool:
+#        pool.starmap(run_target_wrapper, args_list)
+
+def multi_proc_manager(function=None,arg_tuple_list=[]):
+    logger.error(f"Starting multi proc manager {NUM_INSTANCES}")
+    with mp.Pool(int(NUM_INSTANCES)) as p:
+        p.starmap(function, arg_tuple_list)
+
 
 def run_target_wrapper(config_path, input_path, extra_args, get_output=False, silent=False, result_queue=None):
     from .run_target import run_target
     # emu_output = str(run_target(config_path, crashing_input, extra_args, get_output=True, silent=True))
     result_queue.put((input_path,str(run_target(config_path, input_path, extra_args, get_output=get_output, silent=silent))))
 
+def multi_parse_bbl_sets(arg_list, queue, projdir=None):
+    for seconds_from_start,proj_rel_input_paths in arg_list:
+        seen_bbs = set()
+        for proj_rel_input_path in proj_rel_input_paths:
+            input_path = os.path.join(projdir, proj_rel_input_path)
+            bb_set_path = nc.trace_for_input_path(input_path, nc.PREFIX_BASIC_BLOCK_SET)
+            seen_bbs |=  set(parse_bbl_set(bb_set_path))
+
+        queue.put([seconds_from_start, len(seen_bbs),seen_bbs])
+    return True
 
 def do_genstats(args, leftover_args):
     from .util.config import load_config_deep
@@ -768,7 +786,8 @@ def do_genstats(args, leftover_args):
         pc_lr_from_emu_output
 
     check_leftover_args(leftover_args)
-
+    global NUM_INSTANCES
+    NUM_INSTANCES = args.num_instances
     projdir = resolve_projdir(args.projdir)
     latest_config_path = config_file_for_main_path(main_dirs_for_proj(projdir)[-1])
     config_map = load_config_deep(latest_config_path)
@@ -828,37 +847,84 @@ def do_genstats(args, leftover_args):
             not_yet_found_milestone_bbs = set(milestone_bbs)
 
         logger.info("Generating missing basic block set traces, if any")
-        gen_all_missing_traces(projdir, trace_name_prefixes=(nc.PREFIX_BASIC_BLOCK_SET, ), log_progress=True, verbose=args.verbose)
+        gen_all_missing_traces(projdir, trace_name_prefixes=(nc.PREFIX_BASIC_BLOCK_SET, ), log_progress=True, verbose=args.verbose, num_instances=NUM_INSTANCES)
 
         milestone_discovery_timings = {}
         seen_bbs = set()
         coverage_by_second = [[0, 0, set()]]
-        for seconds_from_start, proj_rel_input_path in file_time_entries:
-            input_path = os.path.join(projdir, proj_rel_input_path)
-            bb_set_path = nc.trace_for_input_path(input_path, nc.PREFIX_BASIC_BLOCK_SET)
+        NUM_INSTANCES//=2
+        if use_valid_listing or milestone_bbs or True: #TODO Find out why multiproc is so slow
 
-            curr_trace_bbls = set(parse_bbl_set(bb_set_path))
-            if use_valid_listing:
-                curr_trace_bbls &= valid_bbs
+            for seconds_from_start, proj_rel_input_path in file_time_entries:
+                input_path = os.path.join(projdir, proj_rel_input_path)
+                bb_set_path = nc.trace_for_input_path(input_path, nc.PREFIX_BASIC_BLOCK_SET)
 
-            curr_trace_bbls -= seen_bbs
-            seen_bbs |= curr_trace_bbls
+                curr_trace_bbls = set(parse_bbl_set(bb_set_path))
+                if use_valid_listing:
+                    curr_trace_bbls &= valid_bbs
 
-            if milestone_bbs:
-                # See if we discovered a milestone
-                for bb in not_yet_found_milestone_bbs:
-                    if bb in curr_trace_bbls:
-                        logger.info(f"Found timing for milestone bb {bb:#x} -> {seconds_from_start} seconds")
-                        milestone_discovery_timings[bb] = seconds_from_start
-                not_yet_found_milestone_bbs -= seen_bbs
+                curr_trace_bbls -= seen_bbs
+                seen_bbs |= curr_trace_bbls
 
-            # This trace for same timing as previous one? -> Update existing entry
-            if seconds_from_start == coverage_by_second[-1][0]:
-                coverage_by_second[-1][1] = len(seen_bbs)
-                coverage_by_second[-1][2] |= curr_trace_bbls
-            else:
+                if milestone_bbs:
+                    # See if we discovered a milestone
+                    for bb in not_yet_found_milestone_bbs:
+                        if bb in curr_trace_bbls:
+                            logger.info(f"Found timing for milestone bb {bb:#x} -> {seconds_from_start} seconds")
+                            milestone_discovery_timings[bb] = seconds_from_start
+                    not_yet_found_milestone_bbs -= seen_bbs
+
+                # This trace for same timing as previous one? -> Update existing entry
+                if seconds_from_start == coverage_by_second[-1][0]:
+                    coverage_by_second[-1][1] = len(seen_bbs)
+                    coverage_by_second[-1][2] |= curr_trace_bbls
+                else:
+                    coverage_by_second.append([seconds_from_start, len(seen_bbs), curr_trace_bbls])
+        else:
+            m = mp.Manager()
+            queue = m.Queue()
+            max_seconds = 0
+            for seconds_from_start, proj_rel_input_path in file_time_entries:
+                max_seconds=seconds_from_start if seconds_from_start > max_seconds else max_seconds
+            first_second=file_time_entries[0][0]
+            max_seconds += 1
+            delimiter = max_seconds // (NUM_INSTANCES-1)
+            per_second_arg_list = [[]]*(max_seconds)
+            multi_arg_list=[[]]*NUM_INSTANCES
+            multi_arg_tuples=[]
+
+
+            for seconds_from_start, proj_rel_input_path in file_time_entries:
+                per_second_arg_list[seconds_from_start].append(proj_rel_input_path)
+            for seconds_from_start in range(first_second,max_seconds):
+                multi_arg_list[seconds_from_start//delimiter].append((seconds_from_start,per_second_arg_list[seconds_from_start]))
+            for i in range(NUM_INSTANCES):
+                multi_arg_tuples.append((multi_arg_list[i],queue,projdir))
+
+
+
+            #with mp.Pool(int(NUM_INSTANCES)) as p:
+            #    p.starmap(multi_parse_bbl_sets, multi_arg_tuples)
+
+            p = mp.Process(target=multi_proc_manager, args=(multi_parse_bbl_sets, multi_arg_tuples))
+            p.start()
+            caught=0
+            results_list_unsorted = []
+            while caught<max_seconds:
+                results_list_unsorted.append(queue.get(block=True))
+                caught+=1
+                logger.info(f"Caught {caught}/{max_seconds}")
+            p.join()
+            results_sorted = sorted(results_list_unsorted, key=lambda e: e[0])
+
+            seen_bbs = set()
+            coverage_by_second = [[0, 0, set()]]
+            for seconds_from_start, lenght_bbls, curr_trace_bbls in results_sorted:
+                curr_trace_bbls -= seen_bbs
+                seen_bbs |= curr_trace_bbls
                 coverage_by_second.append([seconds_from_start, len(seen_bbs), curr_trace_bbls])
 
+        NUM_INSTANCES*=2
         bb_coverage_out_path = os.path.join(stats_dir, nc.STATS_FILENAME_COVERAGE_OVER_TIME)
         logger.info(f"Writing coverage per second info to {bb_coverage_out_path}")
         dump_coverage_by_second_entries(bb_coverage_out_path, coverage_by_second)
@@ -885,7 +951,7 @@ def do_genstats(args, leftover_args):
 
     if STATNAME_MMIO_OVERHEAD_ELIM in args.stats:
         logger.info("Generating full MMIO traces. This will take a while...")
-        tracegen_args = argparse.Namespace(dryrun=False, trace_types=["mmio"], fuzzers="1", main_dirs="latest", projdir=projdir, all=False, tracedir_postfix=None, verbose=False, crashes=False)
+        tracegen_args = argparse.Namespace(dryrun=False, trace_types=["mmio"], fuzzers="1", main_dirs="latest", projdir=projdir, all=False, tracedir_postfix=None, verbose=False, crashes=False,num_instances=args.num_instances)
         do_gentraces(tracegen_args, None)
 
         logger.info("Calculating MMIO overhead elimination. This could take a while...")
@@ -921,7 +987,7 @@ def do_genstats(args, leftover_args):
                 args_tuple_list.append([config_path, crashing_input, extra_args, True,True,results_queue])
                 iterator+=1
 
-            p = mp.Process(target=multi_run_target_manager, args=(args_tuple_list,))
+            p = mp.Process(target=multi_proc_manager, args=(run_target_wrapper,args_tuple_list))
             p.start()
             while num_processed < iterator:
                 result=results_queue.get(block=True)
@@ -1070,6 +1136,7 @@ def main():
     parser_gentraces.add_argument('--tracedir-postfix', help="(optional) generate traces in an alternative trace dir. If this is specified, an alternative trace dir is created within the fuzzer dir named traces_<tracedir-postfix>.", default=None)
     parser_gentraces.add_argument('--dryrun', action="store_true", default=False, help="Only list the missing trace files, do not generate actual traces.")
     parser_gentraces.add_argument('-v', '--verbose', action="store_true", default=False, help="Display stdout output of trace generation.")
+    parser_gentraces.add_argument('-n', '--num-instances', default=1, type=int, help="Number of instances to use.")
 
     # Genstats command-line arguments
     parser_genstats.add_argument('stats', nargs="*", default=(STATNAME_COV,STATNAME_MMIO_COSTS), help=f"The stats to generate. Options: {','.join(KNOWN_STATNAMES)}. Defaults to '{STATNAME_COV} {STATNAME_MMIO_COSTS}'.")
@@ -1079,7 +1146,7 @@ def main():
     parser_genstats.add_argument('--i-am-aware-i-am-overcounting-translation-blocks-so-force-skip-valid-bb-file', action="store_true", default=False, help="Force coverage collection to skip valid-listing basic blocks (NOTE: this will overcount coverage to translation blocks instead of basic blocks and is bad practice when comparing results with other fuzzers).")
     parser_genstats.add_argument('--milestone-bb-file', default=None, help=f"A list of basic block addresses which represent some type of milestone for which we are interested in discovery timings. If not specified, will look for a file '{nc.PIPELINE_FILENAME_CHECKPOINT_BBS}'")
     parser_genstats.add_argument('-v', '--verbose', default=False, action="store_true", help="Prints output of emulator child if set.")
-    parser_genstats.add_argument('--num_threads', '-n', default=1, action="store_true", help="Number of threads to use")
+    parser_genstats.add_argument('-n', '--num-instances', default=1, type=int, help="Number of instances to use.")
 
     # Replaytest command-line arguments
     parser_replaytest.add_argument('project_dir', type=os.path.abspath, help="Directory containing the main config")
@@ -1120,7 +1187,6 @@ def main():
 
     args, leftover = parser.parse_known_args()
     logger.debug(f"\n\nStarting fuzzware at {datetime.now()}\n\n")
-
     try:
         args.func(args, leftover)
     except BrokenPipeError:
