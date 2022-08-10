@@ -36,7 +36,10 @@ def add_job_timing_entries(file, entries):
         add_job_timing_entry(file, func_name, result_status, enqueue_time, start_time, end_time)
 
 def parse_job_datetime_string(time_string):
-    return datetime.strptime(time_string, '%Y-%m-%d %H:%M:%S.%f')
+    try:
+        return datetime.strptime(time_string, '%Y-%m-%d %H:%M:%S.%f')
+    except ValueError:
+        return datetime.strptime(time_string, '%Y-%m-%d %H:%M:%S')
 
 def parse_job_timings(job_timings_path):
     res = []
