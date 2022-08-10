@@ -71,8 +71,15 @@ def get_modeled_mmio_contexts(config_map) -> set:
     if 'mmio_models' in config_map:
         for model_entries in config_map['mmio_models'].values():
             for model_entry in model_entries.values():
-                res.add((model_entry['pc'] if 'pc' in model_entry else MMIO_HOOK_PC_ALL_ACCESS_SITES, model_entry['addr']))
-
+                try:
+                    if 'pc' in model_entry.keys():
+                        result=model_entry['pc']
+                    else:
+                        result=MMIO_HOOK_PC_ALL_ACCESS_SITES
+                    res.add((result, model_entry['addr']))
+                except:
+                    logger.error(f"Could not find pc or addr in model entry: {model_entry}")
+                    raise Exception(f"Could not find pc or addr in model entry: {model_entry}")
     return res
 
 def merge_config_file_into(target_config_path, other_config_path):
@@ -158,12 +165,14 @@ def add_config_entry(existing_models, model_type, entry_name, param_map):
         if existing_entry not in existing_models['conflicts'][entry_name]:
             existing_models['conflicts'][entry_name].append(copy.deepcopy(existing_entry))
 
-        logger.warning("Merging configs:\nExisting: {}\nConflicting: {}".format(existing_entry, param_map))
+        logger.warning("Merging configs:\nExisting: {}\nConflicting: {} \nModel Type: {} ".format(existing_entry, param_map, model_type))
         if merge_model_conflict(model_type, existing_entry, param_map):
             logger.warning("Successfully merged into {}".format(existing_entry))
             # existing_models[model_type][entry_name] = merged_model_entry
         else:
-            logger.warning("Merging failed, existing config kept.")
+            logger.warning(f"Merging failed, existing config kept.\nModel_Entry: {existing_entry }\nConflicting: {param_map} \nModel Type: {model_type}")
+
+
             return False
     else:
         existing_models[model_type][entry_name] = param_map
@@ -181,4 +190,10 @@ def merge_model_conflict(model_type, existing_entry, new_entry):
     if model_type == "bitextract":
         existing_entry['mask'] |= new_entry['mask']
         return True
+    if model_type == "unmodeled":
+        if existing_entry['pc'] == new_entry['pc'] and existing_entry['addr'] == new_entry['addr'] and existing_entry['val'] == new_entry['val']:
+            if existing_entry['access_size'] < new_entry['access_size']:
+                existing_entry['access_size'] = new_entry['access_size']
+            return True
+
     return False
