@@ -319,7 +319,7 @@ class Pipeline:
         return os.getpid()
 
     def create_dirs(self):
-        if os.path.exists(self.base_dir):
+        if os.path.exists(self.base_dir) and (len(os.listdir(self.base_dir)) > 0):
             logger.warning("Found an existing project directory under {}. Moving it now".format(self.base_dir))
 
             backup_dirname = self.base_dir + "_old"
@@ -332,7 +332,8 @@ class Pipeline:
                 logger.error("Could not move previous project dir. Still in there?")
                 exit(-1)
 
-        os.mkdir(self.base_dir)
+        if not os.path.exists(self.base_dir):
+            os.mkdir(self.base_dir)
         os.mkdir(self.mmio_states_dir)
         os.mkdir(self.config_snippets_dir)
         os.mkdir(self.logs_dir)
@@ -592,7 +593,8 @@ class Pipeline:
         shutdown_requested = False
         upper_threshold = 1500  # TODO Add a way to calibrate this
         lower_threshold = 100
-
+        last_bb_found = 0
+        minutes_since_start=0
         #########################
 
         while True:
@@ -632,7 +634,7 @@ class Pipeline:
                         and lower_threshold < found_bb < upper_threshold:
 
                     if not found_bb > 2000:
-                        logger.info("BLUEPATTERN [*] Terminating Fuzzware after {0} minutes===========================".format(minutes_since_start))
+                        logger.info(f"BLUEPATTERN [*] Terminating Fuzzware after {minutes_since_start} minutes===========Last Block found {last_bb_found} minutes from start")
                     self.request_shutdown()
                     shutdown_requested = True
 
@@ -722,7 +724,7 @@ class Pipeline:
 
                             # CALC
                             found_bb += len(new_bbs)
-
+                            last_bb_found=minutes_since_start
                             for pc in new_bbs:
                                 if self.groundtruth_valid_basic_blocks and pc in self.groundtruth_valid_basic_blocks:
                                     self.visited_valid_basic_blocks.add(pc)
@@ -789,6 +791,7 @@ class Pipeline:
                         # Check fuzzer process liveness
                         if not self.curr_main_session.is_alive():
                             dead_instance_ids = [i + 1 for i in self.curr_main_session.dead_fuzzer_instance_indices()]
+                            logger.info(f"[WARNING] Fuzzer instances {dead_instance_ids} in session {self.curr_main_sess_index} died, starting new main session, now at restart {num_dead_fuzzer_restarts + 1} of {MAX_NUM_DEAD_FUZZER_RESTARTS}")
                             self.add_warning_line(
                                 f"[WARNING] Fuzzer instances {dead_instance_ids} in session {self.curr_main_sess_index} died, starting new main session, now at restart {num_dead_fuzzer_restarts + 1} of {MAX_NUM_DEAD_FUZZER_RESTARTS}")
 
