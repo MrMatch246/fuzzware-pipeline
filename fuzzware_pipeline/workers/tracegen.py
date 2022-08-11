@@ -82,7 +82,7 @@ def batch_gen_native_traces(config_path, input_paths, extra_args=None, bbl_set_p
 
     # Spawn process, while disabling generation types where we can
 
-    if True:
+    if False:
         m = mp.Manager()
         queue = m.Queue()
         input_paths_list = [[]] * NUM_INSTANCES
