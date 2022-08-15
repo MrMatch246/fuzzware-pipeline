@@ -70,6 +70,8 @@ def get_modeled_mmio_contexts(config_map) -> set:
     res = set()
     if 'mmio_models' in config_map:
         for model_entries in config_map['mmio_models'].values():
+            if model_entries=="errored":
+                continue
             for model_entry in model_entries.values():
                 try:
                     if 'pc' in model_entry.keys():
