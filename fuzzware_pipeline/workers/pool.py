@@ -284,7 +284,7 @@ class WorkerPool:
 
                 if job_status == 'failed':
                     job_args=[str(arg) for arg in job.args]
-                    self.parent.add_warning_line("job failed: {}, started at: {}, args: {}, exc_info: {}".format(job.func_name, job.started_at, job_args[0], job.exc_info))
+                    self.parent.add_warning_line("job failed: {}, started at: {}, args: {}, exc_info: {}".format(job.func_name, job.started_at, job_args[0][0], job.exc_info))
                 self.jobs.remove(job)
                 new_job_timing_entries.append((job.func_name, job_status, job.enqueued_at, job.started_at, job.ended_at))
 
