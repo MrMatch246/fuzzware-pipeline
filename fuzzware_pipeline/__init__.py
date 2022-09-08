@@ -1112,7 +1112,8 @@ def main():
     parser_pipeline.add_argument('--disable-modeling', default=False, action='store_true', help="Disable the generation of MMIO models.")
     parser_pipeline.add_argument('--silent-workers', default=False, action='store_true', help="Disable writing stdout/stderr logs.")
     parser_pipeline.add_argument('--full-traces', default=False, action='store_true', help="Enable generating full traces instead of only generating the (much smaller) set-based traces.")
-    parser_pipeline.add_argument('--skip-afl-cpufreq', default=False, action='store_true', help="Skip AFL's performance governor check by setting AFL_SKIP_CPUFREQ=1.")
+    #TODO Fix this dirty cpu count hack
+    parser_pipeline.add_argument('--skip-afl-cpufreq', default=(False if os.cpu_count()<=24 else True), action='store_true', help="Skip AFL's performance governor check by setting AFL_SKIP_CPUFREQ=1.")
     parser_pipeline.add_argument('--aflpp', default=False, action="store_true", help="Use AFLplusplus (instead of afl).")
     parser_pipeline.add_argument('--cancel_run_under', default=None, help="Cancel Run under x bbs per second")
 

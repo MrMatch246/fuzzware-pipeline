@@ -634,7 +634,7 @@ class Pipeline:
                         and lower_threshold < found_bb < upper_threshold:
 
                     if not found_bb > 2000:
-                        logger.info(f"BLUEPATTERN [*] Terminating Fuzzware after {minutes_since_start} minutes===========Last Block found {last_bb_found} minutes from start")
+                        logger.info(f"BLUEPATTERN [*] Terminating Fuzzware after {minutes_since_start} minutes Last Block found {last_bb_found} minutes from start")
                     self.request_shutdown()
                     shutdown_requested = True
 
