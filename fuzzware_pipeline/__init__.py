@@ -983,12 +983,12 @@ def do_genstats(args, leftover_args):
         for main_dir in main_dirs_for_proj(projdir):
             logger.info(f"Crash contexts from main dir: {main_dir}")
             config_path = None
-            results_dict={}
-            args_tuple_list=[]
-            m=mp.Manager()
-            results_queue= m.Queue()
-            iterator=0
-            num_processed=0
+            results_dict = {}
+            args_tuple_list = []
+            m = mp.Manager()
+            results_queue = m.Queue()
+            iterator = 0
+            num_processed = 0
             for crashing_input in nc.crash_paths_for_main_dir(main_dir):
                 #continue
                 if config_path is None:
@@ -1202,6 +1202,7 @@ def main():
 
     args, leftover = parser.parse_known_args()
     logger.debug(f"\n\nStarting fuzzware at {datetime.now()}\n\n")
+
     try:
         args.func(args, leftover)
     except BrokenPipeError:
