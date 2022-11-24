@@ -18,7 +18,7 @@ from ..util.config import load_extra_args, parse_extra_args
 logger = logging_handler().get_logger("tracegen")
 MULTI = True
 FORKSRV_FD = 198
-NUM_INSTANCES = int(os.cpu_count() / 2) if os.cpu_count()<=24 else 10
+NUM_INSTANCES = int(os.cpu_count() / 2) if os.cpu_count()<=24 else 20
 
 # Make sure these names are synchronized with the argument names below
 ARGNAME_BBL_SET_PATH, ARGNAME_MMIO_SET_PATH = "bbl_set_path", "mmio_set_path"
@@ -149,9 +149,9 @@ def gen_missing_maindir_traces(maindir, required_trace_prefixes, fuzzer_nums=Non
     fuzzer_dirs = nc.fuzzer_dirs_for_main_dir(maindir)
 
     global NUM_INSTANCES
-    if num_instances is not None:
+    if num_instances is not None and False:
         NUM_INSTANCES = num_instances
-    NUM_INSTANCES //= 2
+    #NUM_INSTANCES //= 2
     if fuzzer_nums is not None:
         assert all(0 < i <= len(fuzzer_dirs) for i in fuzzer_nums)
         fuzzer_dirs = [fuzzer_dirs[i-1] for i in fuzzer_nums]
@@ -241,7 +241,7 @@ def gen_missing_maindir_traces(maindir, required_trace_prefixes, fuzzer_nums=Non
                     logger.info(
                         f"[*] Processed {num_processed}/{num_gentrace_jobs} in {time_passed} seconds. Estimated seconds remaining: {time_estimated - time_passed}")
         p.join()
-        NUM_INSTANCES*=2
+        #NUM_INSTANCES*=2
 
 
 def gen_all_missing_traces(projdir, trace_name_prefixes=None, log_progress=False, verbose=False, crashing_inputs=False,num_instances=1):

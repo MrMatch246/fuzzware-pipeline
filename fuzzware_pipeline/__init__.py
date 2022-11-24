@@ -24,7 +24,7 @@ from .util.eval_utils import (collect_covered_basic_blocks, valid_bbs_for_proj,
                                 find_traces_covering_all)
 from fuzzware_harness.tracing.serialization import parse_bbl_set
 
-NUM_INSTANCES = mp.cpu_count() if os.cpu_count()<=24 else 10
+NUM_INSTANCES = mp.cpu_count() if os.cpu_count()<=24 else 20
 
 logger = logging_handler().get_logger("pipeline")
 
